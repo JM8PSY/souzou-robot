@@ -16,3 +16,14 @@ def test_load_default_config():
     assert cfg.aruco_dictionary == "DICT_4X4_50"
     assert cfg.center == MarkerSpec(id=0, height_mm=250.0, size_mm=80.0)
     assert cfg.left.id == 1 and cfg.right.id == 2
+
+
+def test_load_config_rejects_own_side_point_on_center_line(tmp_path):
+    import pytest
+
+    text = (ROOT / "config.yaml").read_text(encoding="utf-8").replace(
+        "own_side_point: [880.0, 0.0]", "own_side_point: [880.0, 900.0]")
+    p = tmp_path / "config.yaml"
+    p.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="own_side_point"):
+        load_config(p)

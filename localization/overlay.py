@@ -25,6 +25,11 @@ def draw_camera_view(img_bgr: np.ndarray, camera: CameraModel, cfg: Config, corn
     cv2.arrowedLine(out, _ipt(o), _ipt(ax), RED, 2)
     cv2.arrowedLine(out, _ipt(o), _ipt(ay), GREEN, 2)
     cv2.putText(out, "O", _ipt(o), cv2.FONT_HERSHEY_SIMPLEX, 0.7, WHITE, 2)
+    # 中央線（越えると反則）と自陣側の印．向きの設定ミスに気づけるようにする
+    (x1, y1), (x2, y2) = cfg.center_line
+    l1, l2, own = camera.field_to_pixel([[x1, y1, 0], [x2, y2, 0], [*cfg.own_side_point, 0]])
+    cv2.line(out, _ipt(l1), _ipt(l2), RED, 3)
+    cv2.putText(out, "OWN", _ipt(own), cv2.FONT_HERSHEY_SIMPLEX, 0.7, GREEN, 2)
     for mid, c in detections.items():
         cv2.polylines(out, [np.round(c).astype(np.int32)], True, BLUE, 2)
         cv2.putText(out, str(mid), _ipt(c[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, BLUE, 2)
@@ -71,4 +76,7 @@ def draw_top_view(result: PoseResult, cfg: Config, px_per_mm: float = 0.4, margi
             cv2.circle(out, to_px(arm.x, arm.y), 5, CYAN, -1)
             if result.pose is not None:
                 cv2.line(out, to_px(result.pose.x, result.pose.y), to_px(arm.x, arm.y), CYAN, 1)
+    if result.warnings:
+        cv2.putText(out, "WARNING: " + ",".join(result.warnings), (margin, margin + 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, RED, 2)
     return out

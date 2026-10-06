@@ -23,7 +23,9 @@ python main.py --recalibrate-field   # 初回／カメラが動いたとき．�
 python main.py                       # 2 回目以降（calib/field.json を再利用）
 ```
 
-- 起動時の確認画面: Enter=採用，m=手動で 4 隅をクリック，Esc=中止．赤丸が原点．
+- 起動時の確認画面: Enter=採用，m=手動で 4 隅をクリック，Esc=中止．赤丸が原点，赤線が中央線，OWN が自陣側．
+  赤線・OWN の位置が実際と違えば `config.yaml` の `center_line` / `own_side_point` を直す（違うままだと越境警告が出ない）．
+- 保存済みの 4 隅は解像度が変わると自動で検出し直す．カメラが動いたと判断したら警告が出るので `--recalibrate-field` を実行する．
 - 実行中: `q` で終了．ログは `logs/pose-日時.jsonl`（1 行 1 フレームの JSON）．
 - 録画を処理: `python main.py --video "rec/%04d.png" --no-gui`
 

@@ -40,6 +40,11 @@ def load_config(path: str | Path) -> Config:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     cam, field, markers = raw["camera"], raw["field"], raw["markers"]
+    center_line = (_xy(field["center_line"]["p1"]), _xy(field["center_line"]["p2"]))
+    own = _xy(field["own_side_point"])
+    (x1, y1), (x2, y2) = center_line
+    if abs((x2 - x1) * (own[1] - y1) - (y2 - y1) * (own[0] - x1)) < 1e-6:
+        raise ValueError("field.own_side_point が中央線上にあります．自陣側の点を指定してください")
     return Config(
         camera_index=int(cam["index"]),
         frame_width=int(cam["width"]),
@@ -47,8 +52,8 @@ def load_config(path: str | Path) -> Config:
         camera_height_mm=float(cam["height_mm"]),
         field_width_mm=float(field["width_mm"]),
         field_height_mm=float(field["height_mm"]),
-        center_line=(_xy(field["center_line"]["p1"]), _xy(field["center_line"]["p2"])),
-        own_side_point=_xy(field["own_side_point"]),
+        center_line=center_line,
+        own_side_point=own,
         aruco_dictionary=str(raw["aruco"]["dictionary"]),
         center=_marker(markers["center"]),
         left=_marker(markers["left"]),

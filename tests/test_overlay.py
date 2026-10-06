@@ -28,3 +28,21 @@ def test_draw_top_view_size_matches_field_scale():
     out = draw_top_view(RESULT, CFG, px_per_mm=0.5, margin=10)
     assert out.shape == (int(FIELD_H * 0.5) + 20, int(FIELD_W * 0.5) + 20, 3)
     draw_top_view(LOST_EMPTY, CFG)
+
+
+def test_camera_view_draws_center_line_in_red():
+    cam = make_camera()
+    img = render(cam, [])
+    corners = cam.field_to_pixel([[0, 0, 0], [FIELD_W, 0, 0], [FIELD_W, FIELD_H, 0], [0, FIELD_H, 0]])
+    out = draw_camera_view(img, cam, CFG, corners, {}, LOST_EMPTY)
+    (x1, y1), (x2, y2) = CFG.center_line
+    u, v = np.round(cam.field_to_pixel([[(x1 + x2) / 2, (y1 + y2) / 2, 0]])[0]).astype(int)
+    assert tuple(out[v, u]) == (0, 0, 255)
+
+
+def test_top_view_shows_warning_text():
+    base = draw_top_view(PoseResult(1.0, "ok", 0.0, Pose2D(600, 400, 0.3), None, None, (), 1.0), CFG)
+    warned = draw_top_view(RESULT, CFG)
+    # 警告ありの方が赤い画素が多い（警告文の分）
+    red = lambda im: int(np.sum(np.all(im == (0, 0, 255), axis=2)))
+    assert red(warned) > red(base) + 50
