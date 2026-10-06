@@ -72,18 +72,22 @@ def detect_field_corners(img_bgr: np.ndarray, min_area_ratio: float = 0.10,
     return None if best is None else order_corners(best)
 
 
-def save_field(path: str | Path, corners) -> None:
+def save_field(path: str | Path, corners, image_size: tuple[int, int]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"corners_px": np.asarray(corners, dtype=float).reshape(4, 2).tolist()}
+    data = {"image_size": [int(image_size[0]), int(image_size[1])],
+            "corners_px": np.asarray(corners, dtype=float).reshape(4, 2).tolist()}
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def load_field(path: str | Path) -> np.ndarray | None:
+def load_field(path: str | Path, image_size: tuple[int, int]) -> np.ndarray | None:
+    """保存済みの 4 隅を読む．ファイルが無い，または保存時と画像サイズが違えば None．"""
     path = Path(path)
     if not path.exists():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
+    if tuple(data.get("image_size", ())) != tuple(image_size):
+        return None
     return np.asarray(data["corners_px"], dtype=np.float64).reshape(4, 2)
 
 

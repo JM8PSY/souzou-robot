@@ -53,12 +53,19 @@ def test_detect_field_returns_none_on_blank_image():
 def test_save_and_load_field(tmp_path):
     corners = np.array([BL, BR, TR, TL], dtype=float)
     path = tmp_path / "sub" / "field.json"
-    save_field(path, corners)
-    np.testing.assert_allclose(load_field(path), corners)
+    save_field(path, corners, (1280, 720))
+    np.testing.assert_allclose(load_field(path, (1280, 720)), corners)
+
+
+def test_load_field_rejects_different_image_size(tmp_path):
+    """解像度が変わった（カメラの設定失敗・別カメラ）なら保存済みの 4 隅は使わない．"""
+    path = tmp_path / "field.json"
+    save_field(path, np.array([BL, BR, TR, TL], dtype=float), (1280, 720))
+    assert load_field(path, (640, 360)) is None
 
 
 def test_load_field_missing_returns_none(tmp_path):
-    assert load_field(tmp_path / "nope.json") is None
+    assert load_field(tmp_path / "nope.json", (1280, 720)) is None
 
 
 def test_detect_field_does_not_merge_two_adjacent_courts():

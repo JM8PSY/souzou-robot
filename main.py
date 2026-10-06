@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from localization.camera_model import CameraModel, load_intrinsics
 from localization.config import Config, load_config
@@ -46,12 +47,28 @@ def open_capture(cfg: Config, video: str | None) -> cv2.VideoCapture:
     return cap
 
 
-def confirm_corners(frame, corners) -> str:
-    """自動検出結果を表示し，'ok' / 'manual' / 'abort' を返す．"""
+CAMERA_MOVED_PX = 10.0
+
+
+def _field_to_image_homography(cfg: Config, corners):
+    """床面 (mm) → 画素 のホモグラフィ（確認画面の描画用）．"""
+    W, H = cfg.field_width_mm, cfg.field_height_mm
+    src = np.array([[0, 0], [W, 0], [W, H], [0, H]], dtype=np.float32)
+    return cv2.getPerspectiveTransform(src, np.asarray(corners, dtype=np.float32))
+
+
+def confirm_corners(frame, corners, cfg: Config) -> str:
+    """自動検出結果（原点・中央線・自陣側）を表示し，'ok' / 'manual' / 'abort' を返す．"""
     view = frame.copy()
     cv2.polylines(view, [corners.round().astype("int32")], True, (255, 255, 0), 2)
     cv2.circle(view, tuple(int(v) for v in corners[0]), 10, (0, 0, 255), -1)  # 原点
-    cv2.putText(view, "Enter: OK / m: manual / Esc: quit", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+    Hm = _field_to_image_homography(cfg, corners)
+    line = cv2.perspectiveTransform(np.array([cfg.center_line], dtype=np.float32), Hm)[0]
+    own = cv2.perspectiveTransform(np.array([[cfg.own_side_point]], dtype=np.float32), Hm)[0][0]
+    cv2.line(view, tuple(int(v) for v in line[0]), tuple(int(v) for v in line[1]), (0, 0, 255), 3)
+    cv2.putText(view, "OWN", tuple(int(v) for v in own), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 0), 2)
+    cv2.putText(view, "Enter: OK / m: manual / Esc: quit  (red=center line, OWN=own side)", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     cv2.imshow("field", view)
     try:
         while True:
@@ -66,21 +83,30 @@ def confirm_corners(frame, corners) -> str:
         cv2.destroyWindow("field")
 
 
-def calibrate_field(frame, field_path: str, recalibrate: bool, gui: bool):
+def calibrate_field(frame, cfg: Config, field_path: str, recalibrate: bool, gui: bool):
     """保存済みの 4 隅を読むか，検出（必要なら手動指定）して保存する．失敗時は None．"""
-    corners = None if recalibrate else load_field(field_path)
-    if corners is not None:
-        return corners
-    corners = detect_field_corners(frame)
+    image_size = (frame.shape[1], frame.shape[0])
+    aspect = cfg.field_width_mm / cfg.field_height_mm
+    detected = detect_field_corners(frame, aspect=aspect)
+    saved = None if recalibrate else load_field(field_path, image_size)
+    if saved is not None:
+        print(f"保存済みのフィールドを使用: {field_path}")
+        if detected is not None and np.abs(detected - saved).max() > CAMERA_MOVED_PX:
+            print("警告: 保存済みの 4 隅と現在の映像がずれています．カメラが動いた可能性があります．"
+                  "空のフィールドで --recalibrate-field を実行してください", file=sys.stderr)
+        return saved
+    if not recalibrate and Path(field_path).exists():
+        print(f"保存済みのフィールド（{field_path}）は解像度が違うため検出し直します")
+    corners = detected
     if gui:
-        choice = confirm_corners(frame, corners) if corners is not None else "manual"
+        choice = confirm_corners(frame, corners, cfg) if corners is not None else "manual"
         if choice == "abort":
             return None
         if choice == "manual":
             corners = pick_corners_manually(frame)
     if corners is None:
         return None
-    save_field(field_path, corners)
+    save_field(field_path, corners, image_size)
     return corners
 
 
@@ -96,7 +122,7 @@ def run(args: argparse.Namespace) -> int:
     if not ok:
         print("エラー: 最初のフレームを取得できません", file=sys.stderr)
         return 1
-    corners = calibrate_field(frame, args.field, args.recalibrate_field, gui)
+    corners = calibrate_field(frame, cfg, args.field, args.recalibrate_field, gui)
     if corners is None:
         print("エラー: フィールドの 4 隅を決められませんでした（空のフィールドで --recalibrate-field を試してください）",
               file=sys.stderr)
@@ -104,8 +130,12 @@ def run(args: argparse.Namespace) -> int:
 
     image_size = (frame.shape[1], frame.shape[0])
     intrinsics = load_intrinsics(args.intrinsics) if args.intrinsics else None
-    camera = CameraModel.from_field(corners, cfg.field_width_mm, cfg.field_height_mm, image_size,
-                                    camera_height_mm=cfg.camera_height_mm, intrinsics=intrinsics)
+    try:
+        camera = CameraModel.from_field(corners, cfg.field_width_mm, cfg.field_height_mm, image_size,
+                                        camera_height_mm=cfg.camera_height_mm, intrinsics=intrinsics)
+    except (ValueError, RuntimeError) as e:
+        print(f"エラー: {e}", file=sys.stderr)
+        return 1
     print(f"カメラ: f={camera.K[0, 0]:.1f}px, 位置=({camera.center[0]:.0f}, {camera.center[1]:.0f}, "
           f"{camera.center[2]:.0f}) mm")
 
