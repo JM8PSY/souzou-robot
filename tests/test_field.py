@@ -59,3 +59,18 @@ def test_save_and_load_field(tmp_path):
 
 def test_load_field_missing_returns_none(tmp_path):
     assert load_field(tmp_path / "nope.json") is None
+
+
+def test_detect_field_does_not_merge_two_adjacent_courts():
+    """中央壁（幅 20mm）を挟んだ 2 面が 1 つの四角形に融合しないこと．どちらか 1 面を返す．"""
+    import cv2
+
+    cam = make_camera(tilt_deg=0.0, cam_xy=(880.0, 910.0), height=3600.0)
+    img = render(cam, [])
+    court_b = [[0, 920, 0], [FIELD_W, 920, 0], [FIELD_W, 920 + FIELD_H, 0], [0, 920 + FIELD_H, 0]]
+    cv2.fillConvexPoly(img, np.round(cam.field_to_pixel(court_b)).astype(np.int32), (20, 20, 20))
+    found = detect_field_corners(img, aspect=FIELD_W / FIELD_H)
+    assert found is not None
+    a = order_corners(cam.field_to_pixel(FIELD_PTS))
+    b = order_corners(cam.field_to_pixel(court_b))
+    assert np.abs(found - a).max() < 3.0 or np.abs(found - b).max() < 3.0

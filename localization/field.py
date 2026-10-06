@@ -29,13 +29,25 @@ def order_corners(pts) -> np.ndarray:
     return best
 
 
-def detect_field_corners(img_bgr: np.ndarray, min_area_ratio: float = 0.10) -> np.ndarray | None:
-    """黒い床面の 4 隅（order_corners 済み）を返す．見つからなければ None．"""
+def _aspect_of(quad: np.ndarray) -> float:
+    """向かい合う辺の平均どうしの比（長い方 / 短い方）．"""
+    q = order_corners(quad)
+    e = [np.linalg.norm(q[(i + 1) % 4] - q[i]) for i in range(4)]
+    a, b = (e[0] + e[2]) / 2, (e[1] + e[3]) / 2
+    return max(a, b) / max(min(a, b), 1e-9)
+
+
+def detect_field_corners(img_bgr: np.ndarray, min_area_ratio: float = 0.10,
+                         aspect: float | None = None, aspect_tol: float = 0.30) -> np.ndarray | None:
+    """黒い床面の 4 隅（order_corners 済み）を返す．見つからなければ None．
+
+    aspect（= 長辺 / 短辺，例 1760/900）を与えると，縦横比が aspect_tol 以上ずれる四角形
+    （隣のコートと融合したもの等）を除外する．"""
     h, w = img_bgr.shape[:2]
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     _, dark = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))  # 大きいと中央壁の細い白線が埋まる
     dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, kernel)
     dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, kernel)
     # CCOMP: 穴の内側にある領域（暗い枠に囲まれた床面）も外側輪郭として得られる
@@ -52,8 +64,11 @@ def detect_field_corners(img_bgr: np.ndarray, min_area_ratio: float = 0.10) -> n
             continue
         hull = cv2.convexHull(cnt)  # マーカーやロボットによる欠けを埋める
         approx = cv2.approxPolyDP(hull, 0.02 * cv2.arcLength(hull, True), True)
-        if len(approx) == 4:
-            best, best_area = approx.reshape(4, 2), area
+        if len(approx) != 4:
+            continue
+        if aspect is not None and abs(_aspect_of(approx.reshape(4, 2)) / aspect - 1) > aspect_tol:
+            continue
+        best, best_area = approx.reshape(4, 2), area
     return None if best is None else order_corners(best)
 
 
