@@ -37,7 +37,7 @@
 
 | ファイル | 責務 | 主な公開インターフェース |
 |---|---|---|
-| `config.yaml` | 設定値 | カメラ番号・解像度，フィールド実寸 `field.width_mm/height_mm`，ArUco 辞書（既定 `DICT_4X4_50`），マーカー ID（中心=0, 左=1, 右=2），各マーカーの高さ `height_mm` と一辺 `size_mm`，中央壁の位置（フィールド座標での直線） |
+| `config.yaml` | 設定値 | カメラ番号・解像度・設置高さ `camera.height_mm`，フィールド実寸 `field.width_mm/height_mm`，ArUco 辞書（既定 `DICT_4X4_50`），マーカー ID（中心=0, 左=1, 右=2），各マーカーの高さ `height_mm` と一辺 `size_mm`，中央壁の位置（フィールド座標での直線） |
 | `localization/config.py` | YAML 読み込みと型付きデータクラス化 | `load_config(path) -> Config` |
 | `localization/field.py` | フィールド四角形の検出と隅の並べ替え，手動クリック指定，JSON 保存/読込 | `detect_field_corners(img) -> np.ndarray(4,2) \| None`，`order_corners(pts)`，`pick_corners_manually(img)`，`save_field(path, corners)`，`load_field(path)` |
 | `localization/camera_model.py` | 内部パラメータの読込 or 推定，外部パラメータ推定，画素→高さ h 平面への投影 | `class CameraModel`：`from_field(corners_px, field_size, image_size, intrinsics=None)`，`pixel_to_field(uv, h_mm) -> (x, y)`，`field_to_pixel(xyz)` |
@@ -45,11 +45,13 @@
 | `localization/pose.py` | ロボット姿勢・アーム先端位置の算出（純粋関数） | `estimate(detections, camera_model, marker_cfg, prev, t) -> PoseResult` |
 | `localization/sinks.py` | 出力先の抽象化 | `class Sink`（`write(result)`, `close()`），`JsonlSink(path)` |
 | `localization/overlay.py` | カメラ映像への描画と俯瞰図の生成 | `draw_camera_view(img, ...)`，`draw_top_view(result, cfg)` |
-| `main.py` | ループ: 取得 → 検出 → 推定 → 表示・記録 | CLI 引数: `--config`, `--recalibrate-field`, `--intrinsics PATH`, `--log PATH` |
+| `main.py` | ループ: 取得 → 検出 → 推定 → 表示・記録 | CLI 引数: `--config`, `--field PATH`, `--recalibrate-field`, `--intrinsics PATH`, `--log PATH`, `--video PATH`（録画／連番画像を処理）, `--no-gui` |
 
 ## 5. 処理の詳細
 
 ### 5.1 フィールド検出（起動時 1 回）
+
+**フィールド検出はロボットを置く前の空のフィールドで行う**（ロボットやマーカーが床の縁にかかると隅がずれるため）．
 
 1. 保存済みのフィールド JSON があり，`--recalibrate-field` 指定がなければそれを読み込む．
 2. なければ自動検出: グレースケール化 → 大津の二値化（黒領域を前景）→ モルフォロジー処理 → 輪郭抽出 →
@@ -63,18 +65,21 @@
 
 - 内部パラメータ:
   - `--intrinsics` でファイル（`camera_matrix`, `dist_coeffs` を含む JSON）が与えられればそれを使う．
-  - なければ推定: 主点＝画像中心，正方画素，歪みなしと仮定し，床面ホモグラフィ H（フィールド mm → 画素）から
-    焦点距離 f を求める（Zhang の制約 h1ᵀ ω h2 = 0 を用いる）．H が退化して f が求まらない（f² ≤ 0 等）場合は，
-    水平画角 60° を仮定した f にフォールバックし，警告を出す．
-- 外部パラメータ: フィールド 4 隅（Z=0）と画素座標から `cv2.solvePnP`（`SOLVEPNP_IPPE`）で R, t を求める．
+  - なければ推定: 主点＝画像中心，正方画素，歪みなしと仮定し，`config.yaml` の `camera.height_mm`
+    （床面からレンズまでの実測高さ）に推定カメラ高さが一致するよう焦点距離 f を二分探索で決める．
+    （天井カメラはほぼ真下を向くため，床面ホモグラフィだけでは f が定まらない．この方法なら真下向きでも安定する．
+    合成データ検証では，高さの実測誤差 ±100mm でも高さ 250mm のマーカー位置誤差は 8mm 未満．）
+- 外部パラメータ: フィールド 4 隅（Z=0）の床面ホモグラフィを分解して初期値を求め（カメラが床の上側にある解を選ぶ），
+  `cv2.solvePnP`（`SOLVEPNP_ITERATIVE`，初期値使用）で R, t を精密化する．
 - `pixel_to_field(uv, h)`: 歪み補正した正規化座標からカメラ光線を作り，フィールド座標系の平面 Z=h との交点 (x, y) を返す．
 
 ### 5.3 姿勢推定
 
 - 中心マーカー（ID 0）が検出された場合:
   - 4 隅を Z=h₀ 平面へ投影し，その平均を位置 (x, y) とする．
-  - 向き θ: マーカー上辺（ArUco の隅 0 → 隅 1）の方向ベクトルに垂直な「マーカー上方向」（隅 3 → 隅 0）をロボット前方とみなし，
-    その atan2 とする．マーカーはロボット前方を上にして貼る前提．
+  - 向き θ: 投影した 4 隅から「マーカー上方向」（ArUco の下辺→上辺）をロボット前方とみなし，その atan2 とする．
+    ノイズ低減のため，左右の縦辺（隅 3→0，隅 2→1）と，上下の横辺（隅 0→1，隅 3→2）を +90° 回したものの 4 本を平均する．
+    マーカーはロボット前方を上にして貼る前提．
   - status = `ok`
 - 中心マーカーが無く，左右アーム端（ID 1, 2）が両方見える場合:
   - 位置 = 左右先端の中点，θ = 左→右ベクトルを +90° 回転した方向（前方）．status = `estimated`
@@ -108,7 +113,8 @@
 - カメラが開けない: エラーメッセージを出して終了コード 1．
 - フレーム取得失敗: 警告を出してスキップし，連続 30 回失敗したら終了．
 - フィールド自動検出失敗: 手動クリック指定に移行．
-- 内部パラメータ推定失敗: 画角 60° 仮定にフォールバックし警告．
+- `--no-gui` でフィールド自動検出に失敗: エラーメッセージを出して終了コード 1．
+- 録画入力（`--video`）の終端: 正常終了（終了コード 0）．
 
 ## 7. テスト方針（pytest）
 
@@ -117,10 +123,11 @@
 - 単体テスト:
   - `order_corners`: 任意順の 4 点が規定順に並ぶ．
   - `detect_field_corners`: 合成画像で真の隅から数 px 以内．
-  - `CameraModel`: 既知 K で `pixel_to_field(field_to_pixel(p), h)` が p に戻る．推定 f が真値に近い（±5%）．
+  - `CameraModel`: 既知 K で `pixel_to_field(field_to_pixel(p), h)` が p に戻る．カメラ高さから推定した f が真値の ±1% 以内．
   - `pose.estimate`: 中心あり／中心なし左右あり／全欠落 の 3 ケースで status と値が期待どおり．
   - `JsonlSink`: 書いた行が JSON として読み戻せ，スキーマどおり．
-- 結合テスト: 合成画像から位置誤差 5mm 以内，向き誤差 1° 以内．
+- 結合テスト: 空フィールドで校正 → ロボットを置いた合成画像から，位置誤差 5mm 以内，向き誤差 1° 以内．
+  連番画像を `--video --no-gui` で `main.run` に通し，JSON Lines の内容を確認する．
 
 ## 8. スコープ外（今回はやらない）
 
