@@ -59,3 +59,19 @@ def test_load_intrinsics(tmp_path):
     K, dist = load_intrinsics(p)
     assert K.shape == (3, 3) and K[0, 0] == 900
     np.testing.assert_allclose(dist, [0.1, -0.05, 0, 0, 0])
+
+
+@pytest.mark.parametrize("bad_height", [2.5, 1e6])
+def test_from_field_rejects_unreachable_camera_height(bad_height):
+    """単位間違い（m を mm 欄に書いた等）は黙って変な f にせず，エラーにする．"""
+    corners = make_camera().field_to_pixel(FIELD_PTS)
+    with pytest.raises(ValueError, match="camera.height_mm"):
+        CameraModel.from_field(corners, FIELD_W, FIELD_H, IMAGE_SIZE, camera_height_mm=bad_height)
+
+
+def test_from_field_tilted_camera_picks_rising_branch():
+    """傾いたカメラではカメラ高さ z(f) が単調でない．正しい（小さい方の）f を選ぶ．"""
+    true_cam = make_camera(tilt_deg=20.0)
+    corners = true_cam.field_to_pixel(FIELD_PTS)
+    cam = CameraModel.from_field(corners, FIELD_W, FIELD_H, IMAGE_SIZE, camera_height_mm=CAMERA_HEIGHT)
+    assert cam.K[0, 0] == pytest.approx(F_TRUE, rel=0.01)

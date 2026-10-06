@@ -76,17 +76,36 @@ class CameraModel:
         if camera_height_mm is None:
             raise ValueError("intrinsics か camera_height_mm のどちらかが必要です")
         dist = np.zeros(5)
-        lo, hi = math.log(50.0), math.log(50000.0)
-        for _ in range(60):
+
+        def height_at(log_f: float) -> float:
+            K = intrinsic_matrix(math.exp(log_f), image_size)
+            return cls.from_corners(corners_px, field_w, field_h, K, dist, refine=False).center[2]
+
+        # 傾いたカメラでは z(f) が単調でない（ある f で最大になり，その後下がる）．
+        # f を小さい方から走査し，初めて実測高さを超える区間で二分探索する．
+        grid = np.linspace(math.log(50.0), math.log(50000.0), 200)
+        lo = hi = None
+        for a, b in zip(grid[:-1], grid[1:]):
+            if height_at(a) < camera_height_mm <= height_at(b):
+                lo, hi = a, b
+                break
+        if lo is None:
+            raise ValueError(
+                f"camera.height_mm={camera_height_mm} に合うカメラ配置が見つかりません．"
+                "単位（mm）と実測値，フィールドの 4 隅を確認してください")
+        for _ in range(50):
             mid = (lo + hi) / 2
-            K = intrinsic_matrix(math.exp(mid), image_size)
-            model = cls.from_corners(corners_px, field_w, field_h, K, dist, refine=False)
-            if model.center[2] < camera_height_mm:
+            if height_at(mid) < camera_height_mm:
                 lo = mid
             else:
                 hi = mid
         K = intrinsic_matrix(math.exp((lo + hi) / 2), image_size)
-        return cls.from_corners(corners_px, field_w, field_h, K, dist)
+        model = cls.from_corners(corners_px, field_w, field_h, K, dist)
+        if not (model.center[2] > 0 and abs(model.center[2] - camera_height_mm) < 0.02 * camera_height_mm):
+            raise ValueError(
+                f"推定したカメラ高さ {model.center[2]:.0f}mm が camera.height_mm={camera_height_mm} と合いません．"
+                "実測値とフィールドの 4 隅を確認してください")
+        return model
 
     def pixel_to_field(self, uv, h_mm: float) -> np.ndarray:
         """画素 (u, v) を通るカメラ光線と平面 Z=h_mm の交点 (x, y) [mm] を返す．"""
