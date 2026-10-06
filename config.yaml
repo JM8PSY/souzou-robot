@@ -1,0 +1,22 @@
+camera:
+  index: 0
+  width: 1280
+  height: 720
+  height_mm: 2500.0   # 床面からカメラレンズまでの高さ（巻尺で実測）
+
+field:
+  width_mm: 1760.0    # +X 方向（長辺）
+  height_mm: 900.0    # +Y 方向（短辺）
+  # 中央壁の線（フィールド座標）と，自陣側にある任意の 1 点
+  center_line:
+    p1: [0.0, 900.0]
+    p2: [1760.0, 900.0]
+  own_side_point: [880.0, 0.0]
+
+aruco:
+  dictionary: DICT_4X4_50
+
+markers:
+  center: {id: 0, height_mm: 250.0, size_mm: 80.0}
+  left:   {id: 1, height_mm: 150.0, size_mm: 60.0}
+  right:  {id: 2, height_mm: 150.0, size_mm: 60.0}
